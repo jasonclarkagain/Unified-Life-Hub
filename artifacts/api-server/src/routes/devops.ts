@@ -418,8 +418,17 @@ Make all file contents complete and production-ready. Never hardcode port number
 
     const auditPrompt = `You are a security and code quality auditor. Inspect the following generated project files and identify issues.
 
+WHITELIST — treat these as safe and never flag or remove them:
+- Any string beginning with "process.env." (e.g. process.env.PORT, process.env.DATABASE_URL) — these are runtime environment references, not secrets
+- Any identifier beginning with "NEXT_PUBLIC_" (e.g. NEXT_PUBLIC_API_URL) — these are intentionally public build-time variables
+- Any identifier beginning with "VITE_" (e.g. VITE_API_BASE) — these are intentionally public Vite build variables
+- Import.meta.env.* references — same as above, public build-time values
+- Placeholder comment strings like "# your key here" or "YOUR_VALUE_HERE" inside comments only
+
+Only flag as HARDCODED SECRETS: raw entropy-heavy string literals (e.g. "sk-abc123...", "ghp_XYZ...") or strings whose variable name contains KEY, SECRET, TOKEN, PASSWORD, or CREDENTIAL and whose value is a non-empty, non-placeholder raw string (not process.env.* or an env reference).
+
 Check for:
-1. HARDCODED SECRETS — any API keys, tokens, passwords, credentials embedded in code
+1. HARDCODED SECRETS — raw API keys, tokens, passwords embedded as string literals (see whitelist above)
 2. REDUNDANT TAILWIND — duplicate or conflicting CSS class combinations
 3. PACKAGE VERSION CONFLICTS — dependencies that are incompatible or pinned to insecure versions
 4. SECURITY VULNERABILITIES — eval(), innerHTML, dangerouslySetInnerHTML without sanitization
