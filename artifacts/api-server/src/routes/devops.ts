@@ -365,16 +365,17 @@ Return ONLY a JSON object with this exact shape:
 
 Include these files at minimum:
 1. README.md — with project overview, architecture, tech stack, setup instructions, and directory tree
-2. package.json — with name, version, scripts (dev, build, test), and dependencies for ${framework} + TypeScript + Tailwind CSS + Bun runtime
+2. package.json — with name, version, scripts (dev, build, test), and dependencies for ${framework} + TypeScript + Tailwind CSS + Bun runtime.
+   CRITICAL: The "start" and "dev" scripts MUST use PORT=0 (e.g. "start": "PORT=0 bun run src/index.tsx") so the OS dynamically assigns the first available port, preventing "Address already in use" errors when running multiple scaffolds simultaneously.
 3. bun.lockb — placeholder file (write the string "# bun lockfile v0" as content)
 4. tsconfig.json — strict TypeScript config for ${framework}
-5. src/index.tsx or src/main.tsx — application entry point
+5. src/index.tsx or src/main.tsx — application entry point. The server MUST bind to process.env.PORT || 0 (never hardcode a port number).
 6. src/components/${componentName}.tsx — the main scaffolded component with TypeScript props interface, Tailwind CSS styling, proper accessibility
 7. src/components/${componentName}.test.tsx — unit tests using Bun test runner
 8. src/styles/globals.css — Tailwind CSS base styles
-9. .github/workflows/ci.yml — CI pipeline: install (bun install), typecheck, test, build
+9. .github/workflows/ci.yml — CI pipeline: install (bun install), typecheck, test, build. Include a step to log "PORT=0 verified" confirming dynamic port usage.
 
-Make all file contents complete and production-ready.`;
+Make all file contents complete and production-ready. Never hardcode port numbers.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-05-20",
@@ -771,6 +772,228 @@ Return ONLY valid JSON:
     req.log.error({ err }, "PR health analysis failed");
     res.status(500).json({ error: "PR health analysis failed" });
   }
+});
+
+// ─── POST /api/devops/ci-health ──────────────────────────────────────────────
+router.post("/devops/ci-health", async (req, res): Promise<void> => {
+  const { repoFullName, deployUrl, phoneNumbers = [] } = req.body as {
+    repoFullName: string;
+    deployUrl?: string | null;
+    phoneNumbers?: string[];
+  };
+
+  if (!repoFullName || !repoFullName.includes("/")) {
+    res.status(400).json({ error: "repoFullName must be in owner/repo format" });
+    return;
+  }
+
+  type CiStep = { name: string; status: "success" | "failed" | "skipped"; detail: string | null };
+  const steps: CiStep[] = [];
+  let ciStatus: "passing" | "failing" | "pending" | "unknown" = "unknown";
+  let deployUrlStatus: number | null = null;
+  let failureSummary: string | null = null;
+  let geminiSuggestion: string | null = null;
+  let smsSent = 0;
+  const connectors = getConnectors();
+
+  // ── Step 1: Fetch GitHub Actions runs ─────────────────────────────────────
+  let failedJobLogs = "";
+  let runHtmlUrl = "";
+  try {
+    const runsRes = await connectors.proxy("github", `/repos/${repoFullName}/actions/runs?per_page=5&event=push`, { method: "GET" });
+    const runsData = await runsRes.json() as Record<string, unknown>;
+    const runs = (runsData["workflow_runs"] as Record<string, unknown>[]) ?? [];
+
+    if (runs.length === 0) {
+      ciStatus = "unknown";
+      steps.push({ name: "Fetch GitHub Actions", status: "skipped", detail: "No workflow runs found (repo may not have CI configured yet)" });
+    } else {
+      const latest = runs[0];
+      runHtmlUrl = String(latest["html_url"] ?? "");
+      const conclusion = String(latest["conclusion"] ?? "");
+      const runStatus = String(latest["status"] ?? "");
+
+      if (runStatus === "in_progress" || runStatus === "queued") {
+        ciStatus = "pending";
+        steps.push({ name: "Fetch GitHub Actions", status: "success", detail: `Latest run is ${runStatus} · ${runHtmlUrl}` });
+      } else if (conclusion === "success") {
+        ciStatus = "passing";
+        steps.push({ name: "Fetch GitHub Actions", status: "success", detail: `CI passing ✓ · ${runHtmlUrl}` });
+      } else if (conclusion === "failure" || conclusion === "timed_out") {
+        ciStatus = "failing";
+        // Fetch the failed jobs to get specific failure info
+        const runId = String(latest["id"] ?? "");
+        try {
+          const jobsRes = await connectors.proxy("github", `/repos/${repoFullName}/actions/runs/${runId}/jobs`, { method: "GET" });
+          const jobsData = await jobsRes.json() as Record<string, unknown>;
+          const jobs = (jobsData["jobs"] as Record<string, unknown>[]) ?? [];
+          const failedJobs = jobs.filter(j => String(j["conclusion"]) === "failure");
+
+          for (const job of failedJobs.slice(0, 3)) {
+            const steps2 = (job["steps"] as Record<string, unknown>[]) ?? [];
+            const failedSteps = steps2.filter(s => String(s["conclusion"]) === "failure");
+            const jobName = String(job["name"] ?? "");
+            const failedStepNames = failedSteps.map(s => String(s["name"] ?? "")).join(", ");
+            failureSummary = (failureSummary ? failureSummary + " | " : "") +
+              `Job "${jobName}" failed at: ${failedStepNames || "unknown step"}`;
+          }
+          failedJobLogs = failureSummary ?? "CI run failed — no detailed step info available";
+        } catch (_err) {
+          failedJobLogs = `CI run ${conclusion} · Run ID: ${runId}`;
+          failureSummary = failedJobLogs;
+        }
+        steps.push({ name: "Fetch GitHub Actions", status: "failed", detail: `CI ${conclusion} · ${failureSummary ?? ""} · ${runHtmlUrl}` });
+      } else {
+        ciStatus = "unknown";
+        steps.push({ name: "Fetch GitHub Actions", status: "skipped", detail: `Run conclusion: ${conclusion || runStatus}` });
+      }
+    }
+  } catch (err) {
+    req.log.warn({ err }, "GitHub Actions fetch failed");
+    steps.push({ name: "Fetch GitHub Actions", status: "failed", detail: err instanceof Error ? err.message : "Unknown error" });
+  }
+
+  // ── Step 2: Probe deploy URL for 5xx ──────────────────────────────────────
+  let deployIs5xx = false;
+  if (deployUrl) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const probeRes = await fetch(deployUrl, {
+        method: "GET",
+        signal: controller.signal,
+        headers: { "User-Agent": "AETHER-OS/CI-Health-Check" },
+      });
+      clearTimeout(timeout);
+      deployUrlStatus = probeRes.status;
+      deployIs5xx = probeRes.status >= 500;
+
+      steps.push({
+        name: `Probe Deploy URL`,
+        status: deployIs5xx ? "failed" : "success",
+        detail: `HTTP ${probeRes.status} from ${deployUrl}${deployIs5xx ? " — 5xx error confirmed" : " — healthy"}`,
+      });
+    } catch (err) {
+      steps.push({ name: "Probe Deploy URL", status: "failed", detail: `Unreachable: ${err instanceof Error ? err.message : "timeout"}` });
+      deployIs5xx = true;
+      deployUrlStatus = null;
+    }
+  } else {
+    steps.push({ name: "Probe Deploy URL", status: "skipped", detail: "No deployUrl provided" });
+  }
+
+  // ── Step 3: Gemini diagnosis + fix suggestion ─────────────────────────────
+  if (ciStatus === "failing" || deployIs5xx) {
+    try {
+      const context = [
+        failureSummary ? `GitHub CI failure: ${failureSummary}` : null,
+        deployUrl && deployUrlStatus != null ? `Deployment URL (${deployUrl}) returned HTTP ${deployUrlStatus}` : null,
+        deployUrl && deployUrlStatus == null ? `Deployment URL (${deployUrl}) is unreachable` : null,
+        runHtmlUrl ? `CI run: ${runHtmlUrl}` : null,
+        `Repository: ${repoFullName}`,
+      ].filter(Boolean).join("\n");
+
+      const prompt = `You are a DevOps engineer diagnosing a CI/deployment failure.
+
+Context:
+${context}
+
+Provide a concise diagnosis and fix in this exact JSON format:
+{
+  "diagnosis": "<1-2 sentences: what likely went wrong>",
+  "fix": "<3-5 specific, actionable steps to resolve the issue>",
+  "urgency": "critical|high|medium",
+  "estimatedFixTime": "<e.g. 15 minutes>"
+}
+
+Be specific and practical. Reference the actual failure context.`;
+
+      const aiRes = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-05-20",
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: { maxOutputTokens: 1024, responseMimeType: "application/json" },
+      });
+
+      const parsed = JSON.parse(aiRes.text ?? "{}") as {
+        diagnosis?: string;
+        fix?: string;
+        urgency?: string;
+        estimatedFixTime?: string;
+      };
+
+      geminiSuggestion = [
+        parsed.diagnosis ? `DIAGNOSIS: ${parsed.diagnosis}` : null,
+        parsed.fix ? `FIX: ${parsed.fix}` : null,
+        parsed.urgency ? `URGENCY: ${parsed.urgency?.toUpperCase()}` : null,
+        parsed.estimatedFixTime ? `ETA: ${parsed.estimatedFixTime}` : null,
+      ].filter(Boolean).join("\n");
+
+      steps.push({ name: "Gemini Fix Analysis", status: "success", detail: parsed.diagnosis ?? "Analysis complete" });
+    } catch (err) {
+      req.log.warn({ err }, "Gemini CI diagnosis failed");
+      steps.push({ name: "Gemini Fix Analysis", status: "failed", detail: "Could not generate fix suggestion" });
+    }
+  } else {
+    steps.push({ name: "Gemini Fix Analysis", status: "skipped", detail: "CI is passing — no analysis needed" });
+  }
+
+  // ── Step 4: Twilio SMS with diagnosis ─────────────────────────────────────
+  const accountSid = process.env["TWILIO_ACCOUNT_SID"];
+  const authToken = process.env["TWILIO_AUTH_TOKEN"];
+  const fromNumber = process.env["TWILIO_FROM_NUMBER"];
+
+  const shouldSendSms = phoneNumbers.length > 0 && (ciStatus === "failing" || deployIs5xx);
+
+  if (!accountSid || !authToken || !fromNumber) {
+    steps.push({
+      name: "Send SMS Alert",
+      status: "skipped",
+      detail: "Twilio env vars not configured (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER)",
+    });
+  } else if (!shouldSendSms) {
+    steps.push({
+      name: "Send SMS Alert",
+      status: "skipped",
+      detail: phoneNumbers.length === 0
+        ? "No phone numbers provided"
+        : "CI is healthy — no alert needed",
+    });
+  } else {
+    const failureLines = [
+      `[AETHER-OS] CI FAILURE: ${repoFullName}`,
+      failureSummary ? `Error: ${failureSummary.slice(0, 100)}` : null,
+      deployIs5xx && deployUrl ? `Deploy: HTTP ${deployUrlStatus ?? "unreachable"} at ${deployUrl}` : null,
+      runHtmlUrl ? `Run: ${runHtmlUrl}` : null,
+      geminiSuggestion ? `\nFix: ${geminiSuggestion.slice(0, 200)}` : null,
+    ].filter(Boolean).join("\n");
+
+    for (const phone of phoneNumbers) {
+      try {
+        const twilioRes = await fetch(
+          `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({ To: phone, From: fromNumber, Body: failureLines.slice(0, 1600) }).toString(),
+          }
+        );
+        const td = await twilioRes.json() as Record<string, unknown>;
+        if (td["sid"]) {
+          smsSent++;
+          steps.push({ name: `SMS Alert → ${phone}`, status: "success", detail: `SID: ${td["sid"]}` });
+        } else {
+          steps.push({ name: `SMS Alert → ${phone}`, status: "failed", detail: String(td["message"] ?? "Send failed") });
+        }
+      } catch (err) {
+        steps.push({ name: `SMS Alert → ${phone}`, status: "failed", detail: err instanceof Error ? err.message : "Unknown" });
+      }
+    }
+  }
+
+  res.json({ repoFullName, ciStatus, deployUrlStatus, failureSummary, geminiSuggestion, smsSent, steps });
 });
 
 // ─── GET /api/devops/summary ──────────────────────────────────────────────────

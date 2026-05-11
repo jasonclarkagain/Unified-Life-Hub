@@ -363,6 +363,56 @@ export interface WorkflowRun {
   steps: WorkflowStep[];
 }
 
+export interface CiHealthInput {
+  /** owner/repo format e.g. jdoe/my-scaffold */
+  repoFullName: string;
+  /**
+   * Deployment URL to probe for 5xx errors
+   * @nullable
+   */
+  deployUrl?: string | null;
+  phoneNumbers?: string[];
+}
+
+export type CiHealthStepStatus =
+  (typeof CiHealthStepStatus)[keyof typeof CiHealthStepStatus];
+
+export const CiHealthStepStatus = {
+  success: "success",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface CiHealthStep {
+  name: string;
+  status: CiHealthStepStatus;
+  /** @nullable */
+  detail?: string | null;
+}
+
+export type CiHealthResultCiStatus =
+  (typeof CiHealthResultCiStatus)[keyof typeof CiHealthResultCiStatus];
+
+export const CiHealthResultCiStatus = {
+  passing: "passing",
+  failing: "failing",
+  pending: "pending",
+  unknown: "unknown",
+} as const;
+
+export interface CiHealthResult {
+  repoFullName: string;
+  ciStatus: CiHealthResultCiStatus;
+  /** @nullable */
+  deployUrlStatus?: number | null;
+  /** @nullable */
+  failureSummary?: string | null;
+  /** @nullable */
+  geminiSuggestion?: string | null;
+  smsSent: number;
+  steps: CiHealthStep[];
+}
+
 export interface AiSummarizeInput {
   text: string;
   /** @nullable */

@@ -3,8 +3,10 @@ import {
   useListFigmaFiles,
   useScaffoldFromFigma,
   useFetchRepoActivity,
+  useCheckCiHealth,
   FigmaScaffold,
   WorkflowStepStatus,
+  CiHealthResult,
 } from "@workspace/api-client-react";
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +25,11 @@ import {
   MessageSquare,
   X,
   Loader2,
+  ShieldAlert,
+  Wifi,
+  WifiOff,
+  ActivitySquare,
+  Phone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,6 +78,164 @@ function RepoActivityPanel({ repoId, provider }: { repoId: string; provider: "gi
   );
 }
 
+// ─── CI Health Monitor Panel ──────────────────────────────────────────────────
+
+function CiMonitorPanel({ repoName }: { repoName: string }) {
+  const { toast } = useToast();
+  const ciMutation = useCheckCiHealth();
+
+  const [deployUrl, setDeployUrl] = useState("");
+  const [phones, setPhones] = useState("");
+  const [result, setResult] = useState<CiHealthResult | null>(null);
+
+  const handleCheck = () => {
+    const phoneNumbers = phones.split(",").map((s) => s.trim()).filter(Boolean);
+    ciMutation.mutate(
+      {
+        data: {
+          repoFullName: repoName,
+          deployUrl: deployUrl.trim() || null,
+          phoneNumbers,
+        },
+      },
+      {
+        onSuccess: (data) => {
+          setResult(data);
+          if (data.ciStatus === "failing" || (data.deployUrlStatus != null && data.deployUrlStatus >= 500)) {
+            toast({ title: "CI_FAILURE_DETECTED", description: "Gemini has analyzed the issue", variant: "destructive" });
+          }
+        },
+        onError: () => {
+          toast({ title: "CI Check Failed", description: "Could not reach the API", variant: "destructive" });
+        },
+      }
+    );
+  };
+
+  const statusIcon = (s: WorkflowStepStatus) => {
+    if (s === "success") return <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />;
+    if (s === "failed") return <XCircle className="w-3 h-3 text-destructive shrink-0" />;
+    return <Clock className="w-3 h-3 text-muted-foreground shrink-0" />;
+  };
+
+  const ciStatusConfig = {
+    passing: { label: "PASSING", color: "text-green-500", bg: "bg-green-500/10 border-green-500/30", icon: <CheckCircle2 className="w-4 h-4" /> },
+    failing: { label: "FAILING", color: "text-destructive", bg: "bg-destructive/10 border-destructive/30", icon: <XCircle className="w-4 h-4" /> },
+    pending: { label: "PENDING", color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/30", icon: <Clock className="w-4 h-4" /> },
+    unknown: { label: "UNKNOWN", color: "text-muted-foreground", bg: "bg-accent/10 border-border", icon: <ActivitySquare className="w-4 h-4" /> },
+  };
+
+  return (
+    <div className="mt-5 border-t border-border pt-5 space-y-4">
+      <h3 className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+        <ShieldAlert className="w-3.5 h-3.5 text-primary" />
+        CI_HEALTH_MONITOR
+      </h3>
+
+      <div className="grid grid-cols-1 gap-3">
+        <div className="space-y-1.5">
+          <Label className="font-mono text-[10px] text-muted-foreground">DEPLOY_URL (optional — probe for 5xx)</Label>
+          <Input
+            placeholder="https://my-app.example.com"
+            value={deployUrl}
+            onChange={(e) => setDeployUrl(e.target.value)}
+            className="bg-background border-border font-mono text-xs h-8"
+            data-testid="input-ci-deploy-url"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="font-mono text-[10px] text-muted-foreground">SMS_ALERT (comma-separated phones — optional)</Label>
+          <div className="flex gap-2">
+            <Input
+              placeholder="+1234567890"
+              value={phones}
+              onChange={(e) => setPhones(e.target.value)}
+              className="bg-background border-border font-mono text-xs h-8 flex-1"
+              data-testid="input-ci-phones"
+            />
+            <Button
+              size="sm"
+              onClick={handleCheck}
+              disabled={ciMutation.isPending}
+              className="font-mono text-xs h-8 shrink-0"
+              data-testid="button-check-ci-health"
+            >
+              {ciMutation.isPending ? (
+                <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />CHECKING...</>
+              ) : (
+                <><ActivitySquare className="w-3 h-3 mr-1.5" />CHECK_CI</>
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {result && (
+        <div className="space-y-3">
+          {/* CI Status badge row */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {(() => {
+              const cfg = ciStatusConfig[result.ciStatus] ?? ciStatusConfig.unknown;
+              return (
+                <div className={`flex items-center gap-2 border rounded-md px-3 py-1.5 font-mono text-xs ${cfg.color} ${cfg.bg}`}>
+                  {cfg.icon}
+                  CI: {cfg.label}
+                </div>
+              );
+            })()}
+            {result.deployUrlStatus != null && (
+              <div className={`flex items-center gap-2 border rounded-md px-3 py-1.5 font-mono text-xs ${
+                result.deployUrlStatus >= 500
+                  ? "text-destructive bg-destructive/10 border-destructive/30"
+                  : result.deployUrlStatus >= 200 && result.deployUrlStatus < 300
+                  ? "text-green-500 bg-green-500/10 border-green-500/30"
+                  : "text-yellow-400 bg-yellow-500/10 border-yellow-500/30"
+              }`}>
+                {result.deployUrlStatus >= 500 ? <WifiOff className="w-4 h-4" /> : <Wifi className="w-4 h-4" />}
+                HTTP: {result.deployUrlStatus}
+              </div>
+            )}
+            {result.smsSent > 0 && (
+              <div className="flex items-center gap-2 border border-primary/30 rounded-md px-3 py-1.5 font-mono text-xs text-primary bg-primary/10">
+                <Phone className="w-3.5 h-3.5" />
+                {result.smsSent} SMS sent
+              </div>
+            )}
+          </div>
+
+          {/* Gemini suggestion */}
+          {result.geminiSuggestion && (
+            <div className="bg-primary/5 border border-primary/20 rounded-md p-3 space-y-1">
+              <div className="text-[10px] font-mono text-primary uppercase tracking-widest flex items-center gap-1.5 mb-2">
+                <Zap className="w-3 h-3" /> GEMINI_FIX_SUGGESTION
+              </div>
+              <pre className="text-xs text-foreground font-mono whitespace-pre-wrap leading-relaxed">
+                {result.geminiSuggestion}
+              </pre>
+            </div>
+          )}
+
+          {/* Execution steps */}
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Telemetry Steps</div>
+            {result.steps.map((step, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs">
+                <div className="mt-0.5">{statusIcon(step.status as WorkflowStepStatus)}</div>
+                <div className="flex-1 min-w-0">
+                  <span className="font-mono text-foreground">{step.name}</span>
+                  {step.detail && (
+                    <div className="text-[10px] text-muted-foreground font-mono mt-0.5 break-all leading-relaxed">{step.detail}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Scaffold Result Panel ────────────────────────────────────────────────────
 
 function ScaffoldResult({ result, onClose }: { result: FigmaScaffold; onClose: () => void }) {
@@ -83,9 +248,14 @@ function ScaffoldResult({ result, onClose }: { result: FigmaScaffold; onClose: (
   const succeeded = result.steps.filter((s) => s.status === "success").length;
   const total = result.steps.length;
 
+  // Determine repoFullName from the repoUrl if possible
+  const repoFullName = result.repoUrl
+    ? result.repoUrl.replace("https://github.com/", "")
+    : result.repoName ?? "";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl bg-card border border-border rounded-lg shadow-[0_0_40px_rgba(0,255,255,0.1)] flex flex-col max-h-[90vh]">
+      <div className="w-full max-w-2xl bg-card border border-border rounded-lg shadow-[0_0_40px_rgba(0,255,255,0.1)] flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-border bg-accent/5 rounded-t-lg">
           <div className="flex items-center gap-3">
@@ -170,6 +340,11 @@ function ScaffoldResult({ result, onClose }: { result: FigmaScaffold; onClose: (
               {result.smsSent} SMS notification{result.smsSent !== 1 ? "s" : ""} sent via Twilio
             </div>
           )}
+
+          {/* ── CI Health Monitor — self-healing telemetry loop ── */}
+          {repoFullName && repoFullName.includes("/") && (
+            <CiMonitorPanel repoName={repoFullName} />
+          )}
         </div>
 
         <div className="p-4 border-t border-border">
@@ -245,8 +420,8 @@ function ScaffoldModal({ file, onClose }: ScaffoldModalProps) {
         <div className="p-5 space-y-4">
           <div className="bg-accent/5 border border-border rounded-md p-3 text-xs text-muted-foreground font-mono leading-relaxed">
             Gemini will analyze the Figma layout, generate a full project directory with
-            README.md, bun.lockb, CI pipeline, components and tests, then commit everything
-            to a new GitHub repo.
+            README.md, bun.lockb, CI pipeline, components and tests (all with PORT=0 for
+            zero-config port assignment), then commit everything to a new GitHub repo.
           </div>
 
           <div className="space-y-2">
@@ -462,9 +637,11 @@ export default function DevOps() {
               </div>
               <div className="pl-5 space-y-0.5 text-[11px]">
                 <div>1. Gemini 2.5 Flash analyzes layout → generates project JSON</div>
-                <div>2. Creates private GitHub repo</div>
-                <div>3. Pushes README.md, bun.lockb, src/, CI pipeline</div>
+                <div>2. Security &amp; Quality Gate audits all files (auto-corrects)</div>
+                <div>3. Creates private GitHub repo + pushes files (PORT=0 enforced)</div>
                 <div>4. Sends Twilio SMS with repo URL (if configured)</div>
+                <div>5. Syncs Project Brief → Google Drive + OneDrive archive</div>
+                <div>6. CI_HEALTH_MONITOR available in result panel</div>
               </div>
             </div>
           </CardContent>

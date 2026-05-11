@@ -468,6 +468,36 @@ export const AnalyzePrHealthResponse = zod.object({
 });
 
 /**
+ * @summary Check GitHub CI status, probe deploy URL for 5xx, and send Gemini fix via SMS if failing
+ */
+export const CheckCiHealthBody = zod.object({
+  repoFullName: zod
+    .string()
+    .describe("owner\/repo format e.g. jdoe\/my-scaffold"),
+  deployUrl: zod
+    .string()
+    .nullish()
+    .describe("Deployment URL to probe for 5xx errors"),
+  phoneNumbers: zod.array(zod.string()).optional(),
+});
+
+export const CheckCiHealthResponse = zod.object({
+  repoFullName: zod.string(),
+  ciStatus: zod.enum(["passing", "failing", "pending", "unknown"]),
+  deployUrlStatus: zod.number().nullish(),
+  failureSummary: zod.string().nullish(),
+  geminiSuggestion: zod.string().nullish(),
+  smsSent: zod.number(),
+  steps: zod.array(
+    zod.object({
+      name: zod.string(),
+      status: zod.enum(["success", "failed", "skipped"]),
+      detail: zod.string().nullish(),
+    }),
+  ),
+});
+
+/**
  * @summary Summarize a block of text using Gemini
  */
 export const AiSummarizeBody = zod.object({

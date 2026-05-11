@@ -419,6 +419,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/PrHealthSummary"
 
+  /devops/ci-health:
+    post:
+      operationId: checkCiHealth
+      tags: [devops]
+      summary: Check GitHub CI status, probe deploy URL for 5xx, and send Gemini fix via SMS if failing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CiHealthInput"
+      responses:
+        "200":
+          description: CI health result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CiHealthResult"
+
   # ─── AI ───────────────────────────────────────────────────────────────────
 
   /ai/summarize:
@@ -959,6 +978,55 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WorkflowStep"
+
+    CiHealthInput:
+      type: object
+      required: [repoFullName]
+      properties:
+        repoFullName:
+          type: string
+          description: "owner/repo format e.g. jdoe/my-scaffold"
+        deployUrl:
+          type: ["string", "null"]
+          description: Deployment URL to probe for 5xx errors
+        phoneNumbers:
+          type: array
+          items:
+            type: string
+
+    CiHealthStep:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [success, failed, skipped]
+        detail:
+          type: ["string", "null"]
+
+    CiHealthResult:
+      type: object
+      required: [repoFullName, ciStatus, steps, smsSent]
+      properties:
+        repoFullName:
+          type: string
+        ciStatus:
+          type: string
+          enum: [passing, failing, pending, unknown]
+        deployUrlStatus:
+          type: ["integer", "null"]
+        failureSummary:
+          type: ["string", "null"]
+        geminiSuggestion:
+          type: ["string", "null"]
+        smsSent:
+          type: integer
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/CiHealthStep"
 
     # ─── AI ─────────────────────────────────────────────────────────────────
 

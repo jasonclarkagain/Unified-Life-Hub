@@ -20,6 +20,8 @@ import type {
   AiSummarizeInput,
   AiSummarizeResult,
   CalendarEvent,
+  CiHealthInput,
+  CiHealthResult,
   CloudFile,
   Deal,
   DevopsSummary,
@@ -1865,6 +1867,92 @@ export const useAnalyzePrHealth = <
   TContext
 > => {
   return useMutation(getAnalyzePrHealthMutationOptions(options));
+};
+
+/**
+ * @summary Check GitHub CI status, probe deploy URL for 5xx, and send Gemini fix via SMS if failing
+ */
+export const getCheckCiHealthUrl = () => {
+  return `/api/devops/ci-health`;
+};
+
+export const checkCiHealth = async (
+  ciHealthInput: CiHealthInput,
+  options?: RequestInit,
+): Promise<CiHealthResult> => {
+  return customFetch<CiHealthResult>(getCheckCiHealthUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(ciHealthInput),
+  });
+};
+
+export const getCheckCiHealthMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof checkCiHealth>>,
+    TError,
+    { data: BodyType<CiHealthInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof checkCiHealth>>,
+  TError,
+  { data: BodyType<CiHealthInput> },
+  TContext
+> => {
+  const mutationKey = ["checkCiHealth"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof checkCiHealth>>,
+    { data: BodyType<CiHealthInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return checkCiHealth(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CheckCiHealthMutationResult = NonNullable<
+  Awaited<ReturnType<typeof checkCiHealth>>
+>;
+export type CheckCiHealthMutationBody = BodyType<CiHealthInput>;
+export type CheckCiHealthMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Check GitHub CI status, probe deploy URL for 5xx, and send Gemini fix via SMS if failing
+ */
+export const useCheckCiHealth = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof checkCiHealth>>,
+    TError,
+    { data: BodyType<CiHealthInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof checkCiHealth>>,
+  TError,
+  { data: BodyType<CiHealthInput> },
+  TContext
+> => {
+  return useMutation(getCheckCiHealthMutationOptions(options));
 };
 
 /**

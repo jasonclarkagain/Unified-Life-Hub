@@ -5,6 +5,7 @@ import {
   useGetCurrentVibe,
   useHealthCheck,
   useAnalyzePrHealth,
+  useApplyVibe,
   PrHealthSummary,
   PrCategory,
 } from "@workspace/api-client-react";
@@ -28,9 +29,11 @@ import {
   Loader2,
   Clock,
   BarChart3,
+  Music2,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 // ─── PR Category Row ──────────────────────────────────────────────────────────
 
@@ -54,8 +57,15 @@ function PrRow({ pr, accent }: { pr: PrCategory; accent: string }) {
 
 // ─── PR Health Panel ──────────────────────────────────────────────────────────
 
-function PrHealthPanel({ health }: { health: PrHealthSummary }) {
+function PrHealthPanel({
+  health,
+  vibeApplied,
+}: {
+  health: PrHealthSummary;
+  vibeApplied: string | null;
+}) {
   const [, navigate] = useLocation();
+
   const categories = [
     {
       label: "BLOCKING_RELEASE",
@@ -94,6 +104,14 @@ function PrHealthPanel({ health }: { health: PrHealthSummary }) {
       <div className="bg-accent/5 border border-border rounded-md p-3 text-sm text-foreground leading-relaxed font-mono">
         {health.summary}
       </div>
+
+      {/* Vibe applied notification */}
+      {vibeApplied && (
+        <div className="flex items-center gap-2 text-xs font-mono bg-primary/10 border border-primary/20 rounded-md px-3 py-2 text-primary">
+          <Music2 className="w-3.5 h-3.5 shrink-0" />
+          Spotify auto-switched to <strong>{vibeApplied.toUpperCase()}</strong> preset based on project health
+        </div>
+      )}
 
       {/* Stat pills */}
       <div className="flex flex-wrap gap-2">
@@ -172,14 +190,54 @@ export default function Dashboard() {
   const { data: vibeStatus, isLoading: vibeLoading } = useGetCurrentVibe();
   const { data: healthStatus, isLoading: healthLoading } = useHealthCheck();
   const prHealthMutation = useAnalyzePrHealth();
+  const applyVibeMutation = useApplyVibe();
+  const { toast } = useToast();
 
   const [prHealth, setPrHealth] = useState<PrHealthSummary | null>(null);
+  const [vibeApplied, setVibeApplied] = useState<string | null>(null);
 
   const handleSyncPrHealth = () => {
+    setVibeApplied(null);
     prHealthMutation.mutate(
       { data: {} },
       {
-        onSuccess: (data) => setPrHealth(data),
+        onSuccess: (data) => {
+          setPrHealth(data);
+
+          // ── Context-aware Spotify auto-switch ──────────────────────────
+          const allReady = data.blocking.length === 0 &&
+            data.failingCi.length === 0 &&
+            data.readyToMerge.length > 0 &&
+            data.other.length === 0;
+
+          const hasBlockers = data.blocking.length > 0;
+          const hasCiFailures = data.failingCi.length > 0;
+
+          let targetPreset: "focus" | "creative" | null = null;
+
+          if (hasBlockers || hasCiFailures) {
+            // Pressure situation → Deep Focus / Lo-Fi
+            targetPreset = "focus";
+          } else if (allReady) {
+            // All PRs ready → Celebratory / Creative
+            targetPreset = "creative";
+          }
+
+          if (targetPreset) {
+            applyVibeMutation.mutate(
+              { data: { preset: targetPreset, playlistId: null } },
+              {
+                onSuccess: () => {
+                  setVibeApplied(targetPreset);
+                  toast({
+                    title: "VIBE_SYNC",
+                    description: `Spotify switched to ${targetPreset.toUpperCase()} based on PR health`,
+                  });
+                },
+              }
+            );
+          }
+        },
       }
     );
   };
@@ -202,7 +260,6 @@ export default function Dashboard() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* DevOps Summary */}
         <Card className="bg-card border-card-border">
           <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
             <CardTitle className="text-sm font-medium font-mono text-muted-foreground">DEVOPS_SUMMARY</CardTitle>
@@ -214,13 +271,14 @@ export default function Dashboard() {
             ) : (
               <>
                 <div className="text-2xl font-bold text-white">{devopsSummary?.openPRs ?? 0} PRs</div>
-                <p className="text-xs text-muted-foreground mt-1">{devopsSummary?.openIssues ?? 0} open issues · {devopsSummary?.totalRepos ?? 0} repos</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {devopsSummary?.openIssues ?? 0} open issues · {devopsSummary?.totalRepos ?? 0} repos
+                </p>
               </>
             )}
           </CardContent>
         </Card>
 
-        {/* Focus Feed */}
         <Card className="bg-card border-card-border">
           <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
             <CardTitle className="text-sm font-medium font-mono text-muted-foreground">FOCUS_FEED</CardTitle>
@@ -238,7 +296,6 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Storage */}
         <Card className="bg-card border-card-border">
           <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
             <CardTitle className="text-sm font-medium font-mono text-muted-foreground">STORAGE_STATS</CardTitle>
@@ -256,7 +313,6 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Vibe */}
         <Card className="bg-card border-card-border">
           <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
             <CardTitle className="text-sm font-medium font-mono text-muted-foreground">VIBE_STATUS</CardTitle>
@@ -278,7 +334,6 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Health Check */}
         <Card className="bg-card border-card-border">
           <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
             <CardTitle className="text-sm font-medium font-mono text-muted-foreground">HEALTH_CHECK</CardTitle>
@@ -310,26 +365,34 @@ export default function Dashboard() {
                 </Badge>
               )}
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleSyncPrHealth}
-              disabled={prHealthMutation.isPending}
-              className="font-mono text-xs"
-              data-testid="button-sync-pr-health"
-            >
-              {prHealthMutation.isPending ? (
-                <>
-                  <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
-                  ANALYZING...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="w-3 h-3 mr-1.5" />
-                  SYNC_PROJECT_HEALTH
-                </>
+            <div className="flex items-center gap-2">
+              {vibeApplied && (
+                <div className="flex items-center gap-1 text-[10px] font-mono text-primary bg-primary/10 border border-primary/20 rounded px-2 py-1">
+                  <Music2 className="w-3 h-3" />
+                  Spotify: {vibeApplied.toUpperCase()}
+                </div>
               )}
-            </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleSyncPrHealth}
+                disabled={prHealthMutation.isPending}
+                className="font-mono text-xs"
+                data-testid="button-sync-pr-health"
+              >
+                {prHealthMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+                    ANALYZING...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-3 h-3 mr-1.5" />
+                    SYNC_PROJECT_HEALTH
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-5">
@@ -338,8 +401,9 @@ export default function Dashboard() {
               <BarChart3 className="w-10 h-10 text-muted-foreground/30" />
               <div className="font-mono text-sm text-muted-foreground">NO_HEALTH_DATA</div>
               <p className="text-xs text-muted-foreground max-w-sm">
-                Click <strong>SYNC_PROJECT_HEALTH</strong> to use Gemini to analyze your open
-                pull requests and generate an executive project health summary.
+                Click <strong>SYNC_PROJECT_HEALTH</strong> to have Gemini analyze your open
+                pull requests and generate an executive project health summary. Spotify will
+                automatically switch presets based on the results.
               </p>
               <Button
                 size="sm"
@@ -357,12 +421,12 @@ export default function Dashboard() {
             <div className="flex flex-col items-center justify-center py-10 space-y-3">
               <Loader2 className="w-8 h-8 text-primary animate-spin" />
               <div className="font-mono text-sm text-muted-foreground">Gemini is analyzing your PRs...</div>
-              <p className="text-xs text-muted-foreground">Fetching PR metadata and running categorization</p>
+              <p className="text-xs text-muted-foreground">Categorizing by urgency + auto-selecting Spotify vibe</p>
             </div>
           )}
 
           {prHealth && !prHealthMutation.isPending && (
-            <PrHealthPanel health={prHealth} />
+            <PrHealthPanel health={prHealth} vibeApplied={vibeApplied} />
           )}
         </CardContent>
       </Card>
