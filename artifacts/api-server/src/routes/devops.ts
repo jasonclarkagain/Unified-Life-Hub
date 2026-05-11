@@ -4,7 +4,7 @@ import { ai } from "@workspace/integrations-gemini-ai";
 
 const router: IRouter = Router();
 
-// GET /api/devops/repos — list GitHub + GitLab repos
+// ─── GET /api/devops/repos ────────────────────────────────────────────────────
 router.get("/devops/repos", async (req, res): Promise<void> => {
   const connectors = getConnectors();
   const repos: unknown[] = [];
@@ -56,7 +56,7 @@ router.get("/devops/repos", async (req, res): Promise<void> => {
   res.json(repos);
 });
 
-// GET /api/devops/repo-activity
+// ─── GET /api/devops/repo-activity ───────────────────────────────────────────
 router.get("/devops/repo-activity", async (req, res): Promise<void> => {
   const { repoId, provider } = req.query as { repoId: string; provider: string };
   if (!repoId || !provider) {
@@ -118,7 +118,7 @@ router.get("/devops/repo-activity", async (req, res): Promise<void> => {
   res.json(activity);
 });
 
-// GET /api/devops/figma/files
+// ─── GET /api/devops/figma/files ─────────────────────────────────────────────
 router.get("/devops/figma/files", async (_req, res): Promise<void> => {
   const files = [
     { key: "demo-file-1", name: "Design System v2", lastModified: new Date().toISOString(), thumbnailUrl: null },
@@ -135,6 +135,7 @@ function toBase64(content: string): string {
 }
 
 interface ScaffoldFile { path: string; content: string; description: string }
+type Step = { name: string; status: "success" | "failed" | "skipped"; detail: string | null };
 
 async function pushFileToGitHub(
   connectors: ReturnType<typeof getConnectors>,
@@ -144,10 +145,7 @@ async function pushFileToGitHub(
 ): Promise<void> {
   await connectors.proxy("github", `/repos/${owner}/${repoName}/contents/${file.path}`, {
     method: "PUT",
-    body: JSON.stringify({
-      message: `scaffold: add ${file.path}`,
-      content: toBase64(file.content),
-    }),
+    body: JSON.stringify({ message: `scaffold: add ${file.path}`, content: toBase64(file.content) }),
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -156,6 +154,160 @@ async function getGitHubUser(connectors: ReturnType<typeof getConnectors>): Prom
   const r = await connectors.proxy("github", "/user", { method: "GET" });
   const d = await r.json() as Record<string, unknown>;
   return String(d["login"] ?? "unknown");
+}
+
+// Google Drive: find or create a folder by name under a parent (null = root)
+async function findOrCreateDriveFolder(
+  connectors: ReturnType<typeof getConnectors>,
+  name: string,
+  parentId?: string
+): Promise<string> {
+  const parentQuery = parentId ? ` and '${parentId}' in parents` : ` and 'root' in parents`;
+  const q = encodeURIComponent(`name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentQuery}`);
+  const listRes = await connectors.proxy("google-drive", `/drive/v3/files?q=${q}&fields=files(id)&pageSize=1`, { method: "GET" });
+  const listData = await listRes.json() as Record<string, unknown>;
+  const existing = ((listData["files"] as Record<string, unknown>[]) ?? [])[0];
+  if (existing?.["id"]) return String(existing["id"]);
+
+  // Create the folder
+  const createRes = await connectors.proxy("google-drive", "/drive/v3/files", {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: parentId ? [parentId] : undefined,
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+  const createData = await createRes.json() as Record<string, unknown>;
+  return String(createData["id"] ?? "");
+}
+
+// Google Drive: upload a text file using multipart upload
+async function uploadToDrive(
+  connectors: ReturnType<typeof getConnectors>,
+  filename: string,
+  content: string,
+  mimeType: string,
+  parentId?: string
+): Promise<string> {
+  const boundary = "aether_boundary_" + Date.now();
+  const metadata: Record<string, unknown> = { name: filename, mimeType };
+  if (parentId) metadata["parents"] = [parentId];
+
+  const body = [
+    `--${boundary}`,
+    "Content-Type: application/json; charset=UTF-8",
+    "",
+    JSON.stringify(metadata),
+    `--${boundary}`,
+    `Content-Type: ${mimeType}`,
+    "",
+    content,
+    `--${boundary}--`,
+  ].join("\r\n");
+
+  const uploadRes = await connectors.proxy("google-drive", "/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink", {
+    method: "POST",
+    body,
+    headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+  });
+  const uploadData = await uploadRes.json() as Record<string, unknown>;
+  return String(uploadData["webViewLink"] ?? uploadData["id"] ?? "");
+}
+
+// OneDrive: upload file to AETHER-OS Deployments folder
+async function uploadToOneDrive(
+  connectors: ReturnType<typeof getConnectors>,
+  filename: string,
+  content: string,
+  mimeType: string
+): Promise<string> {
+  const path = encodeURIComponent(`AETHER-OS Deployments/${filename}`);
+  const uploadRes = await connectors.proxy("onedrive", `/v1.0/me/drive/root:/${path}:/content`, {
+    method: "PUT",
+    body: content,
+    headers: { "Content-Type": mimeType },
+  });
+  const uploadData = await uploadRes.json() as Record<string, unknown>;
+  return String(uploadData["webUrl"] ?? "");
+}
+
+// Generate the HTML Project Brief
+function buildProjectBrief(opts: {
+  componentName: string;
+  repoName: string;
+  repoUrl: string;
+  framework: string;
+  filesCreated: { path: string; description: string; size?: number }[];
+  steps: Step[];
+  qualityAudit: { issuesFound: number; issuesFixed: number; auditSummary: string; corrections: string[] };
+  smsSent: number;
+  generatedAt: string;
+}): string {
+  const { componentName, repoName, repoUrl, framework, filesCreated, steps, qualityAudit, smsSent, generatedAt } = opts;
+  const fileRows = filesCreated.map(f =>
+    `<tr><td><code>${f.path}</code></td><td>${f.description}</td><td>${f.size ?? "-"}B</td></tr>`
+  ).join("\n");
+  const stepRows = steps.map(s => {
+    const color = s.status === "success" ? "#10b981" : s.status === "failed" ? "#ef4444" : "#6b7280";
+    return `<tr><td style="color:${color};font-weight:bold">${s.status.toUpperCase()}</td><td>${s.name}</td><td>${s.detail ?? ""}</td></tr>`;
+  }).join("\n");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>AETHER-OS Project Brief: ${repoName}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0f; color: #e2e8f0; margin: 0; padding: 40px; }
+  h1 { color: #00e5ff; font-size: 2rem; margin-bottom: 4px; }
+  h2 { color: #a78bfa; font-size: 1.1rem; border-bottom: 1px solid #1e1e2e; padding-bottom: 8px; margin-top: 32px; }
+  .badge { display: inline-block; background: #1e1e2e; border: 1px solid #2e2e4e; border-radius: 4px; padding: 2px 10px; font-size: 0.8rem; margin-right: 8px; }
+  .meta { color: #64748b; font-size: 0.85rem; margin-bottom: 24px; }
+  a { color: #00e5ff; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th { text-align: left; color: #64748b; padding: 6px 8px; border-bottom: 1px solid #1e1e2e; }
+  td { padding: 6px 8px; border-bottom: 1px solid #0f0f1a; vertical-align: top; }
+  .quality { background: #0f1a0f; border: 1px solid #10b98130; border-radius: 6px; padding: 16px; margin-top: 8px; }
+  .footer { color: #374151; font-size: 0.75rem; margin-top: 48px; text-align: center; }
+</style>
+</head>
+<body>
+<h1>⚡ AETHER-OS PROJECT BRIEF</h1>
+<div class="meta">
+  Generated: ${generatedAt} &nbsp;|&nbsp;
+  <span class="badge">${framework.toUpperCase()}</span>
+  <span class="badge">${filesCreated.length} files</span>
+  ${smsSent > 0 ? `<span class="badge">${smsSent} SMS sent</span>` : ""}
+</div>
+
+<h2>Repository</h2>
+<p><strong>${repoName}</strong> &mdash; <a href="${repoUrl}">${repoUrl}</a></p>
+<p>Scaffolded from Figma component: <strong>${componentName}</strong></p>
+
+<h2>Quality Audit</h2>
+<div class="quality">
+  <p><strong>${qualityAudit.issuesFound}</strong> issues found &mdash; <strong>${qualityAudit.issuesFixed}</strong> auto-corrected</p>
+  <p>${qualityAudit.auditSummary}</p>
+  ${qualityAudit.corrections.length > 0 ? `<ul>${qualityAudit.corrections.map(c => `<li>${c}</li>`).join("")}</ul>` : ""}
+</div>
+
+<h2>Repository Structure (${filesCreated.length} files)</h2>
+<table>
+  <tr><th>Path</th><th>Description</th><th>Size</th></tr>
+  ${fileRows}
+</table>
+
+<h2>Execution Trace</h2>
+<table>
+  <tr><th>Status</th><th>Step</th><th>Detail</th></tr>
+  ${stepRows}
+</table>
+
+<div class="footer">Generated by AETHER-OS Unified Intelligence Dashboard</div>
+</body>
+</html>`;
 }
 
 // ─── POST /api/devops/figma/scaffold ─────────────────────────────────────────
@@ -179,16 +331,17 @@ router.post("/devops/figma/scaffold", async (req, res): Promise<void> => {
     return;
   }
 
-  const steps: { name: string; status: "success" | "failed" | "skipped"; detail: string | null }[] = [];
+  const steps: Step[] = [];
   let repoUrl: string | null = null;
   let finalRepoName: string | null = null;
   let filesCreated: { path: string; description: string; size: number }[] = [];
   let smsSent = 0;
+  let qualityAudit = { issuesFound: 0, issuesFixed: 0, auditSummary: "Not run", corrections: [] as string[] };
+  let storageSyncDrive: string | null = null;
+  let storageSyncOneDrive: string | null = null;
 
-  // ── Step 1: Gemini — analyze Figma file + generate project structure ────────
+  // ── Step 1: Gemini — generate project structure ───────────────────────────
   let projectFiles: ScaffoldFile[] = [];
-  let readmeContent = "";
-  let architectureDescription = "";
 
   try {
     const prompt = `You are an expert software architect. A Figma design file named "${componentName}" (key: ${fileKey}) is being scaffolded into a ${framework} project.
@@ -213,15 +366,15 @@ Return ONLY a JSON object with this exact shape:
 Include these files at minimum:
 1. README.md — with project overview, architecture, tech stack, setup instructions, and directory tree
 2. package.json — with name, version, scripts (dev, build, test), and dependencies for ${framework} + TypeScript + Tailwind CSS + Bun runtime
-3. bun.lockb — empty binary placeholder (write the string "# bun lockfile v0" as content — it will be initialized by bun install)
+3. bun.lockb — placeholder file (write the string "# bun lockfile v0" as content)
 4. tsconfig.json — strict TypeScript config for ${framework}
 5. src/index.tsx or src/main.tsx — application entry point
-6. src/components/${componentName}.tsx — the main scaffolded component with TypeScript props interface, Tailwind CSS styling, and proper accessibility
+6. src/components/${componentName}.tsx — the main scaffolded component with TypeScript props interface, Tailwind CSS styling, proper accessibility
 7. src/components/${componentName}.test.tsx — unit tests using Bun test runner
 8. src/styles/globals.css — Tailwind CSS base styles
 9. .github/workflows/ci.yml — CI pipeline: install (bun install), typecheck, test, build
 
-Make all file contents complete and production-ready. The component should implement a realistic UI based on the name "${componentName}".`;
+Make all file contents complete and production-ready.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-05-20",
@@ -239,23 +392,98 @@ Make all file contents complete and production-ready. The component should imple
     };
 
     projectFiles = (parsed.files ?? []).filter((f) => f.path && f.content);
-    architectureDescription = parsed.architecture ?? "";
     finalRepoName = requestedRepoName?.trim() ||
       (parsed.projectName ?? componentName).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").slice(0, 40);
 
     steps.push({
       name: "Gemini AI Analysis",
       status: "success",
-      detail: `Generated ${projectFiles.length} files. Stack: ${(parsed.techStack ?? []).join(", ")}. ${parsed.description ?? ""}`,
+      detail: `Generated ${projectFiles.length} files · Stack: ${(parsed.techStack ?? []).join(", ")}`,
     });
   } catch (err) {
     req.log.error({ err }, "Gemini scaffold generation failed");
     steps.push({ name: "Gemini AI Analysis", status: "failed", detail: err instanceof Error ? err.message : "Unknown error" });
-    res.status(500).json({ componentName, framework, repoUrl: null, filesCreated: [], smsSent: 0, steps, code: null, repoName: null });
+    res.status(500).json({ componentName, framework, repoUrl: null, filesCreated: [], smsSent: 0, steps, code: null, repoName: null, qualityAudit, storageSyncDrive: null, storageSyncOneDrive: null });
     return;
   }
 
-  // ── Step 2: Create GitHub repo ────────────────────────────────────────────
+  // ── Step 2: Gemini Quality Gate ───────────────────────────────────────────
+  try {
+    // Send key files to audit (package.json + main component + CI)
+    const auditTargets = projectFiles
+      .filter(f => ["package.json", ".github/workflows/ci.yml", `src/components/${componentName}.tsx`].some(t => f.path.includes(t)))
+      .map(f => `=== ${f.path} ===\n${f.content.slice(0, 3000)}`)
+      .join("\n\n");
+
+    const auditPrompt = `You are a security and code quality auditor. Inspect the following generated project files and identify issues.
+
+Check for:
+1. HARDCODED SECRETS — any API keys, tokens, passwords, credentials embedded in code
+2. REDUNDANT TAILWIND — duplicate or conflicting CSS class combinations
+3. PACKAGE VERSION CONFLICTS — dependencies that are incompatible or pinned to insecure versions
+4. SECURITY VULNERABILITIES — eval(), innerHTML, dangerouslySetInnerHTML without sanitization
+5. MISSING REQUIRED FIELDS — package.json missing "type", "engines", or "license"
+
+Files to audit:
+${auditTargets}
+
+Return ONLY a JSON object:
+{
+  "issuesFound": <integer>,
+  "issuesFixed": <integer>,
+  "auditSummary": "<one paragraph summary of findings and fixes>",
+  "corrections": ["<description of each fix applied>"],
+  "correctedFiles": [
+    { "path": "<file path>", "content": "<full corrected file content>" }
+  ]
+}
+
+If no issues found, return issuesFound: 0, issuesFixed: 0, empty arrays, and a clean bill of health summary.
+Apply all fixes directly and return the corrected file contents in correctedFiles.`;
+
+    const auditResponse = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-05-20",
+      contents: [{ role: "user", parts: [{ text: auditPrompt }] }],
+      config: { maxOutputTokens: 8192, responseMimeType: "application/json" },
+    });
+
+    const auditRaw = auditResponse.text ?? "{}";
+    const auditParsed = JSON.parse(auditRaw) as {
+      issuesFound?: number;
+      issuesFixed?: number;
+      auditSummary?: string;
+      corrections?: string[];
+      correctedFiles?: { path: string; content: string }[];
+    };
+
+    qualityAudit = {
+      issuesFound: auditParsed.issuesFound ?? 0,
+      issuesFixed: auditParsed.issuesFixed ?? 0,
+      auditSummary: auditParsed.auditSummary ?? "Audit complete.",
+      corrections: auditParsed.corrections ?? [],
+    };
+
+    // Merge corrected files back into projectFiles
+    if (Array.isArray(auditParsed.correctedFiles)) {
+      for (const corrected of auditParsed.correctedFiles) {
+        const idx = projectFiles.findIndex(f => f.path === corrected.path);
+        if (idx >= 0 && corrected.content) {
+          projectFiles[idx] = { ...projectFiles[idx], content: corrected.content };
+        }
+      }
+    }
+
+    steps.push({
+      name: "Security & Quality Gate",
+      status: "success",
+      detail: `${qualityAudit.issuesFound} issues found, ${qualityAudit.issuesFixed} auto-corrected. ${qualityAudit.auditSummary.slice(0, 120)}`,
+    });
+  } catch (err) {
+    req.log.warn({ err }, "Quality gate failed — using unaudited files");
+    steps.push({ name: "Security & Quality Gate", status: "failed", detail: "Audit skipped — proceeding with unaudited files" });
+  }
+
+  // ── Step 3: Create GitHub repo ────────────────────────────────────────────
   const connectors = getConnectors();
   let ownerLogin = "";
 
@@ -265,7 +493,7 @@ Make all file contents complete and production-ready. The component should imple
       method: "POST",
       body: JSON.stringify({
         name: finalRepoName,
-        description: `AI-scaffolded from Figma: ${componentName}. ${architectureDescription}`.slice(0, 255),
+        description: `AI-scaffolded from Figma: ${componentName}`.slice(0, 255),
         private: false,
         auto_init: false,
       }),
@@ -277,8 +505,6 @@ Make all file contents complete and production-ready. The component should imple
       steps.push({ name: "Create GitHub Repository", status: "success", detail: repoUrl });
     } else {
       const msg = String(createData["message"] ?? "Repo creation failed");
-      steps.push({ name: "Create GitHub Repository", status: "failed", detail: msg });
-      // Try with timestamp suffix if name conflicts
       if (msg.includes("already exists") || msg.includes("name already")) {
         finalRepoName = `${finalRepoName}-${Date.now()}`;
         const retry = await connectors.proxy("github", "/user/repos", {
@@ -289,8 +515,12 @@ Make all file contents complete and production-ready. The component should imple
         const retryData = await retry.json() as Record<string, unknown>;
         if (retryData["html_url"]) {
           repoUrl = String(retryData["html_url"]);
-          steps[steps.length - 1] = { name: "Create GitHub Repository", status: "success", detail: repoUrl };
+          steps.push({ name: "Create GitHub Repository", status: "success", detail: repoUrl });
+        } else {
+          steps.push({ name: "Create GitHub Repository", status: "failed", detail: "Name conflict could not be resolved" });
         }
+      } else {
+        steps.push({ name: "Create GitHub Repository", status: "failed", detail: msg });
       }
     }
   } catch (err) {
@@ -298,12 +528,11 @@ Make all file contents complete and production-ready. The component should imple
     steps.push({ name: "Create GitHub Repository", status: "failed", detail: err instanceof Error ? err.message : "Unknown" });
   }
 
-  // ── Step 3: Push all files to the repo via GitHub Contents API ────────────
+  // ── Step 4: Push audited files to GitHub ──────────────────────────────────
   if (repoUrl && ownerLogin && finalRepoName) {
     const pushed: string[] = [];
     const failed: string[] = [];
 
-    // Push files sequentially to avoid GitHub rate-limiting on new repos
     for (const file of projectFiles) {
       try {
         await pushFileToGitHub(connectors, ownerLogin, finalRepoName, file);
@@ -319,39 +548,30 @@ Make all file contents complete and production-ready. The component should imple
       }
     }
 
-    if (pushed.length > 0) {
-      steps.push({
-        name: "Push Files to Repository",
-        status: failed.length === 0 ? "success" : "success",
-        detail: `${pushed.length} files committed: ${pushed.slice(0, 5).join(", ")}${pushed.length > 5 ? `... +${pushed.length - 5} more` : ""}${failed.length > 0 ? ` | ${failed.length} failed: ${failed.join(", ")}` : ""}`,
-      });
-    } else {
-      steps.push({ name: "Push Files to Repository", status: "failed", detail: "No files could be pushed" });
-    }
+    steps.push({
+      name: "Push Audited Files to Repository",
+      status: pushed.length > 0 ? "success" : "failed",
+      detail: `${pushed.length} files committed${failed.length > 0 ? ` · ${failed.length} failed: ${failed.join(", ")}` : ""}`,
+    });
   } else {
-    steps.push({ name: "Push Files to Repository", status: "skipped", detail: "Skipped — repo creation failed" });
+    steps.push({ name: "Push Audited Files to Repository", status: "skipped", detail: "Repo creation failed" });
   }
 
-  // ── Step 4: Twilio SMS ─────────────────────────────────────────────────────
+  // ── Step 5: Twilio SMS ─────────────────────────────────────────────────────
   const accountSid = process.env["TWILIO_ACCOUNT_SID"];
   const authToken = process.env["TWILIO_AUTH_TOKEN"];
   const fromNumber = process.env["TWILIO_FROM_NUMBER"];
 
-  if (!accountSid || !authToken || !fromNumber) {
-    if (phoneNumbers.length > 0) {
-      steps.push({
-        name: "Send SMS Notifications",
-        status: "skipped",
-        detail: "TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER env vars not set",
-      });
-    } else {
-      steps.push({ name: "Send SMS Notifications", status: "skipped", detail: "No phone numbers provided" });
-    }
-  } else if (phoneNumbers.length === 0) {
-    steps.push({ name: "Send SMS Notifications", status: "skipped", detail: "No phone numbers provided" });
+  if (!accountSid || !authToken || !fromNumber || phoneNumbers.length === 0) {
+    steps.push({
+      name: "Send SMS Notifications",
+      status: "skipped",
+      detail: phoneNumbers.length === 0
+        ? "No phone numbers provided"
+        : "Twilio env vars not configured (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER)",
+    });
   } else {
-    const message = `[AETHER-OS] Scaffold complete for "${componentName}" (${framework}). ${filesCreated.length} files committed. Repo: ${repoUrl ?? "pending"}`;
-
+    const message = `[AETHER-OS] Scaffold complete: "${componentName}" → ${filesCreated.length} files committed. Audit: ${qualityAudit.issuesFixed} fixes applied. Repo: ${repoUrl ?? "pending"}`;
     for (const phone of phoneNumbers) {
       try {
         const twilioRes = await fetch(
@@ -365,21 +585,83 @@ Make all file contents complete and production-ready. The component should imple
             body: new URLSearchParams({ To: phone, From: fromNumber, Body: message }).toString(),
           }
         );
-        const twilioData = await twilioRes.json() as Record<string, unknown>;
-        if (twilioData["sid"]) {
+        const td = await twilioRes.json() as Record<string, unknown>;
+        if (td["sid"]) {
           smsSent++;
-          steps.push({ name: `SMS → ${phone}`, status: "success", detail: `SID: ${twilioData["sid"]}` });
+          steps.push({ name: `SMS → ${phone}`, status: "success", detail: `SID: ${td["sid"]}` });
         } else {
-          steps.push({ name: `SMS → ${phone}`, status: "failed", detail: String(twilioData["message"] ?? "Send failed") });
+          steps.push({ name: `SMS → ${phone}`, status: "failed", detail: String(td["message"] ?? "Send failed") });
         }
       } catch (err) {
         steps.push({ name: `SMS → ${phone}`, status: "failed", detail: err instanceof Error ? err.message : "Unknown" });
       }
     }
+  }
 
-    if (smsSent > 0) {
-      req.log.info({ smsSent, repoUrl }, "Twilio SMS sent");
+  // ── Step 6: Google Drive — save Project Brief ─────────────────────────────
+  if (repoUrl && finalRepoName) {
+    try {
+      const brief = buildProjectBrief({
+        componentName,
+        repoName: finalRepoName,
+        repoUrl,
+        framework,
+        filesCreated,
+        steps: [...steps],
+        qualityAudit,
+        smsSent,
+        generatedAt: new Date().toISOString(),
+      });
+
+      const aetherId = await findOrCreateDriveFolder(connectors, "AETHER-OS");
+      const deploymentsId = await findOrCreateDriveFolder(connectors, "Deployments", aetherId);
+      const briefFilename = `${finalRepoName}-brief-${Date.now()}.html`;
+      storageSyncDrive = await uploadToDrive(connectors, briefFilename, brief, "text/html", deploymentsId);
+
+      steps.push({
+        name: "Google Drive — Project Brief",
+        status: "success",
+        detail: `Saved to AETHER-OS/Deployments/${briefFilename}${storageSyncDrive ? ` · ${storageSyncDrive}` : ""}`,
+      });
+    } catch (err) {
+      req.log.warn({ err }, "Google Drive upload failed");
+      steps.push({ name: "Google Drive — Project Brief", status: "failed", detail: err instanceof Error ? err.message : "Upload failed" });
     }
+
+    // ── Step 7: OneDrive — archive README + package.json ─────────────────────
+    const archiveFiles = projectFiles.filter(f => f.path === "README.md" || f.path === "package.json");
+    const odResults: string[] = [];
+    const odFailed: string[] = [];
+
+    for (const f of archiveFiles) {
+      try {
+        const mimeType = f.path === "package.json" ? "application/json" : "text/markdown";
+        const prefix = finalRepoName ?? componentName;
+        const odFilename = `${prefix}-${f.path.replace(/\//g, "-")}`;
+        const odUrl = await uploadToOneDrive(connectors, odFilename, f.content, mimeType);
+        odResults.push(odUrl || odFilename);
+      } catch (err) {
+        req.log.warn({ err, path: f.path }, "OneDrive upload failed");
+        odFailed.push(f.path);
+      }
+    }
+
+    if (archiveFiles.length === 0) {
+      steps.push({ name: "OneDrive — Archive", status: "skipped", detail: "README.md or package.json not found in generated files" });
+    } else if (odFailed.length === archiveFiles.length) {
+      storageSyncOneDrive = null;
+      steps.push({ name: "OneDrive — Archive", status: "failed", detail: `All ${odFailed.length} uploads failed` });
+    } else {
+      storageSyncOneDrive = odResults[0] ?? null;
+      steps.push({
+        name: "OneDrive — Archive",
+        status: "success",
+        detail: `Archived ${odResults.length} files to OneDrive/AETHER-OS Deployments/${odFailed.length > 0 ? ` (${odFailed.length} failed)` : ""}`,
+      });
+    }
+  } else {
+    steps.push({ name: "Google Drive — Project Brief", status: "skipped", detail: "Repo not created" });
+    steps.push({ name: "OneDrive — Archive", status: "skipped", detail: "Repo not created" });
   }
 
   res.json({
@@ -391,10 +673,107 @@ Make all file contents complete and production-ready. The component should imple
     smsSent,
     steps,
     code: null,
+    qualityAudit,
+    storageSyncDrive,
+    storageSyncOneDrive,
   });
 });
 
-// GET /api/devops/summary
+// ─── POST /api/devops/pr-health ───────────────────────────────────────────────
+router.post("/devops/pr-health", async (req, res): Promise<void> => {
+  const connectors = getConnectors();
+
+  // Fetch open PRs across all GitHub repos (search API)
+  let prs: Record<string, unknown>[] = [];
+  try {
+    const searchRes = await connectors.proxy("github", "/search/issues?q=type:pr+state:open&per_page=30&sort=updated", { method: "GET" });
+    const searchData = await searchRes.json() as Record<string, unknown>;
+    prs = (searchData["items"] as Record<string, unknown>[]) ?? [];
+  } catch (err) {
+    req.log.warn({ err }, "PR search failed");
+  }
+
+  if (prs.length === 0) {
+    res.json({
+      totalPrs: 0,
+      summary: "No open pull requests found.",
+      blocking: [],
+      readyToMerge: [],
+      failingCi: [],
+      other: [],
+      generatedAt: new Date().toISOString(),
+    });
+    return;
+  }
+
+  // Gather PR check statuses for first 10 PRs (avoid rate limits)
+  const prDetails = prs.slice(0, 20).map((p) => ({
+    id: Number(p["number"]),
+    title: String(p["title"] ?? ""),
+    url: String(p["html_url"] ?? ""),
+    author: String((p["user"] as Record<string, unknown>)?.["login"] ?? "unknown"),
+    labels: ((p["labels"] as Record<string, unknown>[]) ?? []).map((l) => String(l["name"] ?? "")),
+    draft: Boolean(p["draft"]),
+    body: String(p["body"] ?? "").slice(0, 300),
+    state: String(p["state"] ?? ""),
+    repository: String((p["repository_url"] as string ?? "").split("/").slice(-1)[0] ?? "unknown"),
+  }));
+
+  // Gemini categorization
+  try {
+    const prJson = JSON.stringify(prDetails, null, 2);
+    const prompt = `You are a senior engineering lead reviewing open pull requests. Analyze these ${prDetails.length} open PRs and categorize them:
+
+PRs:
+${prJson}
+
+Categorize each PR into exactly ONE of these groups:
+- "blocking" — blocking a release, has merge conflicts, breaking changes, or is a critical fix stalled
+- "readyToMerge" — approved, CI passing (inferred from labels/title), no blockers, clean
+- "failingCi" — title/labels suggest CI failures, test failures, or build errors
+- "other" — everything else (in review, draft, needs discussion)
+
+Also write a 2-3 sentence "Project Health" executive summary.
+
+Return ONLY valid JSON:
+{
+  "summary": "<executive summary>",
+  "blocking": [{ "id": <number>, "title": "<string>", "url": "<string>", "author": "<string>", "reason": "<why blocking>" }],
+  "readyToMerge": [{ "id": <number>, "title": "<string>", "url": "<string>", "author": "<string>", "reason": "<why ready>" }],
+  "failingCi": [{ "id": <number>, "title": "<string>", "url": "<string>", "author": "<string>", "reason": "<what's failing>" }],
+  "other": [{ "id": <number>, "title": "<string>", "url": "<string>", "author": "<string>", "reason": "<status>" }]
+}`;
+
+    const aiRes = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-05-20",
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: { maxOutputTokens: 8192, responseMimeType: "application/json" },
+    });
+
+    const parsed = JSON.parse(aiRes.text ?? "{}") as {
+      summary?: string;
+      blocking?: unknown[];
+      readyToMerge?: unknown[];
+      failingCi?: unknown[];
+      other?: unknown[];
+    };
+
+    res.json({
+      totalPrs: prs.length,
+      summary: parsed.summary ?? `${prs.length} open pull requests analyzed.`,
+      blocking: parsed.blocking ?? [],
+      readyToMerge: parsed.readyToMerge ?? [],
+      failingCi: parsed.failingCi ?? [],
+      other: parsed.other ?? [],
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    req.log.error({ err }, "PR health analysis failed");
+    res.status(500).json({ error: "PR health analysis failed" });
+  }
+});
+
+// ─── GET /api/devops/summary ──────────────────────────────────────────────────
 router.get("/devops/summary", async (req, res): Promise<void> => {
   const connectors = getConnectors();
   let openPRs = 0;

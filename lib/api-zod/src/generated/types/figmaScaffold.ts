@@ -5,6 +5,7 @@
  * AETHER-OS unified intelligence dashboard API
  * OpenAPI spec version: 0.1.0
  */
+import type { QualityAuditResult } from "./qualityAuditResult";
 import type { ScaffoldedFile } from "./scaffoldedFile";
 import type { WorkflowStep } from "./workflowStep";
 
@@ -20,4 +21,9 @@ export interface FigmaScaffold {
   steps: WorkflowStep[];
   /** @nullable */
   code?: string | null;
+  qualityAudit?: QualityAuditResult;
+  /** @nullable */
+  storageSyncDrive?: string | null;
+  /** @nullable */
+  storageSyncOneDrive?: string | null;
 }

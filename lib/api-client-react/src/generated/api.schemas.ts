@@ -93,6 +93,36 @@ export interface ScaffoldedFile {
   size?: number;
 }
 
+export interface QualityAuditResult {
+  issuesFound: number;
+  issuesFixed: number;
+  auditSummary: string;
+  corrections?: string[];
+}
+
+export interface PrHealthInput {
+  /** @nullable */
+  repoFilter?: string | null;
+}
+
+export interface PrCategory {
+  id: number;
+  title: string;
+  url: string;
+  author: string;
+  reason: string;
+}
+
+export interface PrHealthSummary {
+  totalPrs: number;
+  summary: string;
+  blocking: PrCategory[];
+  readyToMerge: PrCategory[];
+  failingCi: PrCategory[];
+  other: PrCategory[];
+  generatedAt: string;
+}
+
 export type WorkflowStepStatus =
   (typeof WorkflowStepStatus)[keyof typeof WorkflowStepStatus];
 
@@ -121,6 +151,11 @@ export interface FigmaScaffold {
   steps: WorkflowStep[];
   /** @nullable */
   code?: string | null;
+  qualityAudit?: QualityAuditResult;
+  /** @nullable */
+  storageSyncDrive?: string | null;
+  /** @nullable */
+  storageSyncOneDrive?: string | null;
 }
 
 export interface DevopsSummary {

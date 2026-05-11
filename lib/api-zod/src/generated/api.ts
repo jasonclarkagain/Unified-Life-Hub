@@ -119,6 +119,16 @@ export const ScaffoldFromFigmaResponse = zod.object({
     }),
   ),
   code: zod.string().nullish(),
+  qualityAudit: zod
+    .object({
+      issuesFound: zod.number(),
+      issuesFixed: zod.number(),
+      auditSummary: zod.string(),
+      corrections: zod.array(zod.string()).optional(),
+    })
+    .optional(),
+  storageSyncDrive: zod.string().nullish(),
+  storageSyncOneDrive: zod.string().nullish(),
 });
 
 /**
@@ -407,6 +417,55 @@ export const ListWorkflowRunsResponseItem = zod.object({
   ),
 });
 export const ListWorkflowRunsResponse = zod.array(ListWorkflowRunsResponseItem);
+
+/**
+ * @summary Use Gemini to analyze open PRs and generate a Project Health summary
+ */
+export const AnalyzePrHealthBody = zod.object({
+  repoFilter: zod.string().nullish(),
+});
+
+export const AnalyzePrHealthResponse = zod.object({
+  totalPrs: zod.number(),
+  summary: zod.string(),
+  blocking: zod.array(
+    zod.object({
+      id: zod.number(),
+      title: zod.string(),
+      url: zod.string(),
+      author: zod.string(),
+      reason: zod.string(),
+    }),
+  ),
+  readyToMerge: zod.array(
+    zod.object({
+      id: zod.number(),
+      title: zod.string(),
+      url: zod.string(),
+      author: zod.string(),
+      reason: zod.string(),
+    }),
+  ),
+  failingCi: zod.array(
+    zod.object({
+      id: zod.number(),
+      title: zod.string(),
+      url: zod.string(),
+      author: zod.string(),
+      reason: zod.string(),
+    }),
+  ),
+  other: zod.array(
+    zod.object({
+      id: zod.number(),
+      title: zod.string(),
+      url: zod.string(),
+      author: zod.string(),
+      reason: zod.string(),
+    }),
+  ),
+  generatedAt: zod.string(),
+});
 
 /**
  * @summary Summarize a block of text using Gemini

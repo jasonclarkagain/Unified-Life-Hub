@@ -400,6 +400,25 @@ paths:
                 items:
                   $ref: "#/components/schemas/WorkflowRun"
 
+  /devops/pr-health:
+    post:
+      operationId: analyzePrHealth
+      tags: [devops]
+      summary: Use Gemini to analyze open PRs and generate a Project Health summary
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrHealthInput"
+      responses:
+        "200":
+          description: PR health summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrHealthSummary"
+
   # ─── AI ───────────────────────────────────────────────────────────────────
 
   /ai/summarize:
@@ -565,6 +584,69 @@ components:
         size:
           type: integer
 
+    QualityAuditResult:
+      type: object
+      required: [issuesFound, issuesFixed, auditSummary]
+      properties:
+        issuesFound:
+          type: integer
+        issuesFixed:
+          type: integer
+        auditSummary:
+          type: string
+        corrections:
+          type: array
+          items:
+            type: string
+
+    PrHealthInput:
+      type: object
+      properties:
+        repoFilter:
+          type: ["string", "null"]
+
+    PrCategory:
+      type: object
+      required: [id, title, url, author, reason]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        url:
+          type: string
+        author:
+          type: string
+        reason:
+          type: string
+
+    PrHealthSummary:
+      type: object
+      required: [totalPrs, summary, blocking, readyToMerge, failingCi, other, generatedAt]
+      properties:
+        totalPrs:
+          type: integer
+        summary:
+          type: string
+        blocking:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrCategory"
+        readyToMerge:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrCategory"
+        failingCi:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrCategory"
+        other:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrCategory"
+        generatedAt:
+          type: string
+
     FigmaScaffold:
       type: object
       required: [componentName, framework, steps]
@@ -588,6 +670,12 @@ components:
           items:
             $ref: "#/components/schemas/WorkflowStep"
         code:
+          type: ["string", "null"]
+        qualityAudit:
+          $ref: "#/components/schemas/QualityAuditResult"
+        storageSyncDrive:
+          type: ["string", "null"]
+        storageSyncOneDrive:
           type: ["string", "null"]
 
     DevopsSummary:

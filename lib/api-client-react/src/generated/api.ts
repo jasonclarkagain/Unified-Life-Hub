@@ -37,6 +37,8 @@ import type {
   HealthStatus,
   OneClickWorkflowInput,
   OneClickWorkflowResult,
+  PrHealthInput,
+  PrHealthSummary,
   PrioritizeInput,
   Repo,
   RepoActivity,
@@ -1778,6 +1780,92 @@ export function useListWorkflowRuns<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Use Gemini to analyze open PRs and generate a Project Health summary
+ */
+export const getAnalyzePrHealthUrl = () => {
+  return `/api/devops/pr-health`;
+};
+
+export const analyzePrHealth = async (
+  prHealthInput?: PrHealthInput,
+  options?: RequestInit,
+): Promise<PrHealthSummary> => {
+  return customFetch<PrHealthSummary>(getAnalyzePrHealthUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(prHealthInput),
+  });
+};
+
+export const getAnalyzePrHealthMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof analyzePrHealth>>,
+    TError,
+    { data: BodyType<PrHealthInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof analyzePrHealth>>,
+  TError,
+  { data: BodyType<PrHealthInput> },
+  TContext
+> => {
+  const mutationKey = ["analyzePrHealth"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof analyzePrHealth>>,
+    { data: BodyType<PrHealthInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return analyzePrHealth(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AnalyzePrHealthMutationResult = NonNullable<
+  Awaited<ReturnType<typeof analyzePrHealth>>
+>;
+export type AnalyzePrHealthMutationBody = BodyType<PrHealthInput>;
+export type AnalyzePrHealthMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Use Gemini to analyze open PRs and generate a Project Health summary
+ */
+export const useAnalyzePrHealth = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof analyzePrHealth>>,
+    TError,
+    { data: BodyType<PrHealthInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof analyzePrHealth>>,
+  TError,
+  { data: BodyType<PrHealthInput> },
+  TContext
+> => {
+  return useMutation(getAnalyzePrHealthMutationOptions(options));
+};
 
 /**
  * @summary Summarize a block of text using Gemini
