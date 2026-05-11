@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "AETHER-OS"
+version = "1.0.0"
+id = "artifacts/aether-os"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 26025
+
+[services.development]
+run = "pnpm --filter @workspace/aether-os run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/aether-os", "run", "build" ]
+publicDir = "artifacts/aether-os/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "26025"
+BASE_PATH = "/"

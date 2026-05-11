@@ -1,22 +1,33 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: AETHER-OS unified intelligence dashboard API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: devops
+    description: GitHub, GitLab, Figma DevOps integrations
+  - name: focus-feed
+    description: Unified communications focus feed (Gmail, Outlook, HubSpot)
+  - name: storage
+    description: Cross-cloud storage (Google Drive, OneDrive)
+  - name: environment
+    description: Office environment automation (Spotify, Squidler, Calendar)
+  - name: workflow
+    description: One-Click Workflow automation
+  - name: ai
+    description: AI prioritization via Gemini
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +35,392 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ─── DEVOPS ───────────────────────────────────────────────────────────────
+
+  /devops/repos:
+    get:
+      operationId: listRepos
+      tags: [devops]
+      summary: List repos from GitHub and GitLab
+      responses:
+        "200":
+          description: List of repos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Repo"
+
+  /devops/repo-activity:
+    get:
+      operationId: fetchRepoActivity
+      tags: [devops]
+      summary: Get recent commits, PRs, and issues for a repo
+      parameters:
+        - name: repoId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: provider
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [github, gitlab]
+      responses:
+        "200":
+          description: Repo activity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoActivity"
+
+  /devops/figma/files:
+    get:
+      operationId: listFigmaFiles
+      tags: [devops]
+      summary: List Figma files from connected account
+      responses:
+        "200":
+          description: Figma files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FigmaFile"
+
+  /devops/figma/scaffold:
+    post:
+      operationId: scaffoldFromFigma
+      tags: [devops]
+      summary: Generate boilerplate code scaffold from a Figma file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FigmaScaffoldInput"
+      responses:
+        "200":
+          description: Generated scaffold
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FigmaScaffold"
+
+  /devops/summary:
+    get:
+      operationId: getDevopsSummary
+      tags: [devops]
+      summary: Aggregated DevOps summary (open PRs, issues, recent commits)
+      responses:
+        "200":
+          description: DevOps summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevopsSummary"
+
+  # ─── FOCUS FEED ───────────────────────────────────────────────────────────
+
+  /focus-feed:
+    get:
+      operationId: getFocusFeed
+      tags: [focus-feed]
+      summary: Get AI-prioritized unified inbox (Gmail + Outlook + HubSpot)
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Prioritized feed items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FeedItem"
+
+  /focus-feed/prioritize:
+    post:
+      operationId: prioritizeFeed
+      tags: [focus-feed]
+      summary: Use Gemini AI to re-score and prioritize feed items
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrioritizeInput"
+      responses:
+        "200":
+          description: Prioritized and scored feed items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FeedItem"
+
+  /focus-feed/hubspot/deals:
+    get:
+      operationId: listHubspotDeals
+      tags: [focus-feed]
+      summary: List open HubSpot CRM deals
+      responses:
+        "200":
+          description: HubSpot deals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Deal"
+
+  /focus-feed/stats:
+    get:
+      operationId: getFocusFeedStats
+      tags: [focus-feed]
+      summary: Feed statistics (unread counts, urgency breakdown, deal pipeline)
+      responses:
+        "200":
+          description: Focus feed stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FocusFeedStats"
+
+  # ─── STORAGE ──────────────────────────────────────────────────────────────
+
+  /storage/search:
+    get:
+      operationId: searchFiles
+      tags: [storage]
+      summary: Search files across Google Drive and OneDrive
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: provider
+          in: query
+          schema:
+            type: string
+            enum: [all, google-drive, onedrive]
+            default: all
+      responses:
+        "200":
+          description: Matching files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CloudFile"
+
+  /storage/recent:
+    get:
+      operationId: getRecentFiles
+      tags: [storage]
+      summary: Get recently modified files from all clouds
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Recent files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CloudFile"
+
+  /storage/stats:
+    get:
+      operationId: getStorageStats
+      tags: [storage]
+      summary: Storage usage and file count per cloud provider
+      responses:
+        "200":
+          description: Storage stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageStats"
+
+  # ─── ENVIRONMENT ──────────────────────────────────────────────────────────
+
+  /environment/vibe:
+    get:
+      operationId: getCurrentVibe
+      tags: [environment]
+      summary: Get current office vibe settings (music, status)
+      responses:
+        "200":
+          description: Current vibe
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VibeStatus"
+
+  /environment/vibe/apply:
+    post:
+      operationId: applyVibe
+      tags: [environment]
+      summary: Apply a vibe preset (starts Spotify playlist based on calendar event type)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VibeInput"
+      responses:
+        "200":
+          description: Vibe applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VibeStatus"
+
+  /environment/calendar:
+    get:
+      operationId: getCalendarEvents
+      tags: [environment]
+      summary: Get upcoming Outlook calendar events
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+      responses:
+        "200":
+          description: Calendar events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CalendarEvent"
+
+  /environment/spotify/playlists:
+    get:
+      operationId: listSpotifyPlaylists
+      tags: [environment]
+      summary: List Spotify playlists for vibe selection
+      responses:
+        "200":
+          description: Playlists
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SpotifyPlaylist"
+
+  /environment/health-checks:
+    get:
+      operationId: listHealthChecks
+      tags: [environment]
+      summary: List Squidler web app health check results
+      responses:
+        "200":
+          description: Health check results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HealthCheckResult"
+
+  /environment/health-checks/run:
+    post:
+      operationId: runHealthCheck
+      tags: [environment]
+      summary: Trigger a Squidler health check on a URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HealthCheckInput"
+      responses:
+        "200":
+          description: Health check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCheckResult"
+
+  # ─── ONE-CLICK WORKFLOW ───────────────────────────────────────────────────
+
+  /workflow/one-click:
+    post:
+      operationId: triggerOneClickWorkflow
+      tags: [workflow]
+      summary: "One-Click Workflow: HubSpot deal -> GitHub repo + Figma scaffold + Twilio SMS"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OneClickWorkflowInput"
+      responses:
+        "200":
+          description: Workflow result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OneClickWorkflowResult"
+
+  /workflow/history:
+    get:
+      operationId: listWorkflowRuns
+      tags: [workflow]
+      summary: List past One-Click Workflow runs
+      responses:
+        "200":
+          description: Workflow run history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkflowRun"
+
+  # ─── AI ───────────────────────────────────────────────────────────────────
+
+  /ai/summarize:
+    post:
+      operationId: aiSummarize
+      tags: [ai]
+      summary: Summarize a block of text using Gemini
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiSummarizeInput"
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiSummarizeResult"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +428,433 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    # ─── DEVOPS ─────────────────────────────────────────────────────────────
+
+    Repo:
+      type: object
+      required: [id, name, provider, url, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        fullName:
+          type: string
+        provider:
+          type: string
+          enum: [github, gitlab]
+        url:
+          type: string
+        description:
+          type: ["string", "null"]
+        stars:
+          type: integer
+        openIssues:
+          type: integer
+        updatedAt:
+          type: string
+
+    RepoActivity:
+      type: object
+      required: [repoId, commits, pullRequests, issues]
+      properties:
+        repoId:
+          type: string
+        commits:
+          type: array
+          items:
+            $ref: "#/components/schemas/Commit"
+        pullRequests:
+          type: array
+          items:
+            $ref: "#/components/schemas/PullRequest"
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/Issue"
+
+    Commit:
+      type: object
+      required: [sha, message, author, date]
+      properties:
+        sha:
+          type: string
+        message:
+          type: string
+        author:
+          type: string
+        date:
+          type: string
+
+    PullRequest:
+      type: object
+      required: [id, title, state, author, url, createdAt]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        state:
+          type: string
+        author:
+          type: string
+        url:
+          type: string
+        createdAt:
+          type: string
+
+    Issue:
+      type: object
+      required: [id, title, state, author, url, createdAt]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        state:
+          type: string
+        author:
+          type: string
+        url:
+          type: string
+        createdAt:
+          type: string
+
+    FigmaFile:
+      type: object
+      required: [key, name, lastModified, thumbnailUrl]
+      properties:
+        key:
+          type: string
+        name:
+          type: string
+        lastModified:
+          type: string
+        thumbnailUrl:
+          type: ["string", "null"]
+
+    FigmaScaffoldInput:
+      type: object
+      required: [fileKey, componentName]
+      properties:
+        fileKey:
+          type: string
+        componentName:
+          type: string
+        framework:
+          type: string
+          enum: [react, vue, html]
+          default: react
+
+    FigmaScaffold:
+      type: object
+      required: [componentName, code, framework]
+      properties:
+        componentName:
+          type: string
+        code:
+          type: string
+        framework:
+          type: string
+
+    DevopsSummary:
+      type: object
+      required: [openPRs, openIssues, recentCommits, totalRepos]
+      properties:
+        openPRs:
+          type: integer
+        openIssues:
+          type: integer
+        recentCommits:
+          type: integer
+        totalRepos:
+          type: integer
+        lastUpdated:
+          type: string
+
+    # ─── FOCUS FEED ─────────────────────────────────────────────────────────
+
+    FeedItem:
+      type: object
+      required: [id, source, subject, sender, preview, receivedAt, urgencyScore, isRead]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+          enum: [gmail, outlook, hubspot]
+        subject:
+          type: string
+        sender:
+          type: string
+        preview:
+          type: string
+        receivedAt:
+          type: string
+        urgencyScore:
+          type: integer
+          description: 0-100, AI-assigned urgency
+        isRead:
+          type: boolean
+        labels:
+          type: array
+          items:
+            type: string
+        dealId:
+          type: ["string", "null"]
+
+    PrioritizeInput:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeedItem"
+
+    Deal:
+      type: object
+      required: [id, name, stage, amount, closeDate, ownerId]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        stage:
+          type: string
+        amount:
+          type: ["number", "null"]
+        closeDate:
+          type: ["string", "null"]
+        ownerId:
+          type: string
+
+    FocusFeedStats:
+      type: object
+      required: [unreadGmail, unreadOutlook, openDeals, urgentCount]
+      properties:
+        unreadGmail:
+          type: integer
+        unreadOutlook:
+          type: integer
+        openDeals:
+          type: integer
+        urgentCount:
+          type: integer
+        dealPipelineValue:
+          type: number
+
+    # ─── STORAGE ────────────────────────────────────────────────────────────
+
+    CloudFile:
+      type: object
+      required: [id, name, provider, mimeType, modifiedAt, webViewLink]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+          enum: [google-drive, onedrive]
+        mimeType:
+          type: string
+        size:
+          type: ["integer", "null"]
+        modifiedAt:
+          type: string
+        webViewLink:
+          type: string
+        ownerName:
+          type: ["string", "null"]
+
+    StorageStats:
+      type: object
+      required: [googleDriveFiles, oneDriveFiles, totalFiles]
+      properties:
+        googleDriveFiles:
+          type: integer
+        oneDriveFiles:
+          type: integer
+        totalFiles:
+          type: integer
+        googleDriveUsedBytes:
+          type: ["integer", "null"]
+
+    # ─── ENVIRONMENT ────────────────────────────────────────────────────────
+
+    VibeStatus:
+      type: object
+      required: [isPlaying, preset]
+      properties:
+        isPlaying:
+          type: boolean
+        preset:
+          type: string
+          enum: [focus, meeting, creative, break, standup, off]
+        trackName:
+          type: ["string", "null"]
+        artistName:
+          type: ["string", "null"]
+        playlistName:
+          type: ["string", "null"]
+        playlistId:
+          type: ["string", "null"]
+
+    VibeInput:
+      type: object
+      required: [preset]
+      properties:
+        preset:
+          type: string
+          enum: [focus, meeting, creative, break, standup, off]
+        playlistId:
+          type: ["string", "null"]
+
+    CalendarEvent:
+      type: object
+      required: [id, subject, start, end, isOnlineMeeting]
+      properties:
+        id:
+          type: string
+        subject:
+          type: string
+        start:
+          type: string
+        end:
+          type: string
+        location:
+          type: ["string", "null"]
+        isOnlineMeeting:
+          type: boolean
+        organizer:
+          type: ["string", "null"]
+
+    SpotifyPlaylist:
+      type: object
+      required: [id, name, trackCount]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        trackCount:
+          type: integer
+        imageUrl:
+          type: ["string", "null"]
+
+    HealthCheckResult:
+      type: object
+      required: [id, url, status, statusCode, responseTimeMs, checkedAt]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+        status:
+          type: string
+          enum: [healthy, degraded, down, unknown]
+        statusCode:
+          type: ["integer", "null"]
+        responseTimeMs:
+          type: ["integer", "null"]
+        checkedAt:
+          type: string
+        error:
+          type: ["string", "null"]
+
+    HealthCheckInput:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+
+    # ─── ONE-CLICK WORKFLOW ──────────────────────────────────────────────────
+
+    OneClickWorkflowInput:
+      type: object
+      required: [dealId, teamPhoneNumbers]
+      properties:
+        dealId:
+          type: string
+        teamPhoneNumbers:
+          type: array
+          items:
+            type: string
+        repoName:
+          type: ["string", "null"]
+        figmaFileKey:
+          type: ["string", "null"]
+
+    OneClickWorkflowResult:
+      type: object
+      required: [success, dealName, steps]
+      properties:
+        success:
+          type: boolean
+        dealName:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowStep"
+        repoUrl:
+          type: ["string", "null"]
+        smsCount:
+          type: integer
+
+    WorkflowStep:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [success, failed, skipped]
+        detail:
+          type: ["string", "null"]
+
+    WorkflowRun:
+      type: object
+      required: [id, dealId, dealName, triggeredAt, success, steps]
+      properties:
+        id:
+          type: integer
+        dealId:
+          type: string
+        dealName:
+          type: string
+        triggeredAt:
+          type: string
+        success:
+          type: boolean
+        repoUrl:
+          type: ["string", "null"]
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowStep"
+
+    # ─── AI ─────────────────────────────────────────────────────────────────
+
+    AiSummarizeInput:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+        context:
+          type: ["string", "null"]
+
+    AiSummarizeResult:
+      type: object
+      required: [summary]
+      properties:
+        summary:
+          type: string
