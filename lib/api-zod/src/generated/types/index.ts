@@ -38,6 +38,7 @@ export * from "./pullRequest";
 export * from "./repo";
 export * from "./repoActivity";
 export * from "./repoProvider";
+export * from "./scaffoldedFile";
 export * from "./searchFilesParams";
 export * from "./searchFilesProvider";
 export * from "./spotifyPlaylist";

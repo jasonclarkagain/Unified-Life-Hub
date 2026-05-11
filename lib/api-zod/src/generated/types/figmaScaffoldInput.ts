@@ -11,4 +11,7 @@ export interface FigmaScaffoldInput {
   fileKey: string;
   componentName: string;
   framework?: FigmaScaffoldInputFramework;
+  /** @nullable */
+  repoName?: string | null;
+  phoneNumbers?: string[];
 }

@@ -92,12 +92,33 @@ export const ScaffoldFromFigmaBody = zod.object({
   framework: zod
     .enum(["react", "vue", "html"])
     .default(scaffoldFromFigmaBodyFrameworkDefault),
+  repoName: zod.string().nullish(),
+  phoneNumbers: zod.array(zod.string()).optional(),
 });
 
 export const ScaffoldFromFigmaResponse = zod.object({
   componentName: zod.string(),
-  code: zod.string(),
   framework: zod.string(),
+  repoUrl: zod.string().nullish(),
+  repoName: zod.string().nullish(),
+  filesCreated: zod
+    .array(
+      zod.object({
+        path: zod.string(),
+        description: zod.string(),
+        size: zod.number().optional(),
+      }),
+    )
+    .optional(),
+  smsSent: zod.number().optional(),
+  steps: zod.array(
+    zod.object({
+      name: zod.string(),
+      status: zod.enum(["success", "failed", "skipped"]),
+      detail: zod.string().nullish(),
+    }),
+  ),
+  code: zod.string().nullish(),
 });
 
 /**

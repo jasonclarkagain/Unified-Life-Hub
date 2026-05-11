@@ -82,12 +82,45 @@ export interface FigmaScaffoldInput {
   fileKey: string;
   componentName: string;
   framework?: FigmaScaffoldInputFramework;
+  /** @nullable */
+  repoName?: string | null;
+  phoneNumbers?: string[];
+}
+
+export interface ScaffoldedFile {
+  path: string;
+  description: string;
+  size?: number;
+}
+
+export type WorkflowStepStatus =
+  (typeof WorkflowStepStatus)[keyof typeof WorkflowStepStatus];
+
+export const WorkflowStepStatus = {
+  success: "success",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface WorkflowStep {
+  name: string;
+  status: WorkflowStepStatus;
+  /** @nullable */
+  detail?: string | null;
 }
 
 export interface FigmaScaffold {
   componentName: string;
-  code: string;
   framework: string;
+  /** @nullable */
+  repoUrl?: string | null;
+  /** @nullable */
+  repoName?: string | null;
+  filesCreated?: ScaffoldedFile[];
+  smsSent?: number;
+  steps: WorkflowStep[];
+  /** @nullable */
+  code?: string | null;
 }
 
 export interface DevopsSummary {
@@ -273,22 +306,6 @@ export interface OneClickWorkflowInput {
   repoName?: string | null;
   /** @nullable */
   figmaFileKey?: string | null;
-}
-
-export type WorkflowStepStatus =
-  (typeof WorkflowStepStatus)[keyof typeof WorkflowStepStatus];
-
-export const WorkflowStepStatus = {
-  success: "success",
-  failed: "failed",
-  skipped: "skipped",
-} as const;
-
-export interface WorkflowStep {
-  name: string;
-  status: WorkflowStepStatus;
-  /** @nullable */
-  detail?: string | null;
 }
 
 export interface OneClickWorkflowResult {

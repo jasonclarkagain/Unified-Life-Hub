@@ -547,17 +547,48 @@ components:
           type: string
           enum: [react, vue, html]
           default: react
+        repoName:
+          type: ["string", "null"]
+        phoneNumbers:
+          type: array
+          items:
+            type: string
+
+    ScaffoldedFile:
+      type: object
+      required: [path, description]
+      properties:
+        path:
+          type: string
+        description:
+          type: string
+        size:
+          type: integer
 
     FigmaScaffold:
       type: object
-      required: [componentName, code, framework]
+      required: [componentName, framework, steps]
       properties:
         componentName:
           type: string
-        code:
-          type: string
         framework:
           type: string
+        repoUrl:
+          type: ["string", "null"]
+        repoName:
+          type: ["string", "null"]
+        filesCreated:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScaffoldedFile"
+        smsSent:
+          type: integer
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowStep"
+        code:
+          type: ["string", "null"]
 
     DevopsSummary:
       type: object

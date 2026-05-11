@@ -5,9 +5,19 @@
  * AETHER-OS unified intelligence dashboard API
  * OpenAPI spec version: 0.1.0
  */
+import type { ScaffoldedFile } from "./scaffoldedFile";
+import type { WorkflowStep } from "./workflowStep";
 
 export interface FigmaScaffold {
   componentName: string;
-  code: string;
   framework: string;
+  /** @nullable */
+  repoUrl?: string | null;
+  /** @nullable */
+  repoName?: string | null;
+  filesCreated?: ScaffoldedFile[];
+  smsSent?: number;
+  steps: WorkflowStep[];
+  /** @nullable */
+  code?: string | null;
 }
