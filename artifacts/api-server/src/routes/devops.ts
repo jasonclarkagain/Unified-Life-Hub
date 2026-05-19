@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { getConnectors } from "../lib/connectors";
 import { ai } from "@workspace/integrations-gemini-ai";
+import { validateSafeUrl } from "../lib/ssrf";
 
 const router: IRouter = Router();
 
@@ -865,27 +866,34 @@ router.post("/devops/ci-health", async (req, res): Promise<void> => {
   // ── Step 2: Probe deploy URL for 5xx ──────────────────────────────────────
   let deployIs5xx = false;
   if (deployUrl) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      const probeRes = await fetch(deployUrl, {
-        method: "GET",
-        signal: controller.signal,
-        headers: { "User-Agent": "AETHER-OS/CI-Health-Check" },
-      });
-      clearTimeout(timeout);
-      deployUrlStatus = probeRes.status;
-      deployIs5xx = probeRes.status >= 500;
+    const urlValidation = await validateSafeUrl(deployUrl);
+    if (!urlValidation.valid) {
+      steps.push({ name: "Probe Deploy URL", status: "failed", detail: `Rejected: ${urlValidation.reason}` });
+      deployIs5xx = false;
+    } else {
+      const safeDeployUrl = urlValidation.url.toString();
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        const probeRes = await fetch(safeDeployUrl, {
+          method: "GET",
+          signal: controller.signal,
+          headers: { "User-Agent": "AETHER-OS/CI-Health-Check" },
+        });
+        clearTimeout(timeout);
+        deployUrlStatus = probeRes.status;
+        deployIs5xx = probeRes.status >= 500;
 
-      steps.push({
-        name: `Probe Deploy URL`,
-        status: deployIs5xx ? "failed" : "success",
-        detail: `HTTP ${probeRes.status} from ${deployUrl}${deployIs5xx ? " — 5xx error confirmed" : " — healthy"}`,
-      });
-    } catch (err) {
-      steps.push({ name: "Probe Deploy URL", status: "failed", detail: `Unreachable: ${err instanceof Error ? err.message : "timeout"}` });
-      deployIs5xx = true;
-      deployUrlStatus = null;
+        steps.push({
+          name: `Probe Deploy URL`,
+          status: deployIs5xx ? "failed" : "success",
+          detail: `HTTP ${probeRes.status} from ${safeDeployUrl}${deployIs5xx ? " — 5xx error confirmed" : " — healthy"}`,
+        });
+      } catch (err) {
+        steps.push({ name: "Probe Deploy URL", status: "failed", detail: `Unreachable: ${err instanceof Error ? err.message : "timeout"}` });
+        deployIs5xx = true;
+        deployUrlStatus = null;
+      }
     }
   } else {
     steps.push({ name: "Probe Deploy URL", status: "skipped", detail: "No deployUrl provided" });

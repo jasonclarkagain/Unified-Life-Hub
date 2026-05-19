@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { getConnectors } from "../lib/connectors";
 import { logger } from "../lib/logger";
+import { validateSafeUrl } from "../lib/ssrf";
 
 const router: IRouter = Router();
 
@@ -161,6 +162,13 @@ router.post("/environment/health-checks/run", async (req, res): Promise<void> =>
     return;
   }
 
+  const urlValidation = await validateSafeUrl(url);
+  if (!urlValidation.valid) {
+    res.status(400).json({ error: `Invalid URL: ${urlValidation.reason}` });
+    return;
+  }
+  const safeUrl = urlValidation.url.toString();
+
   const id = `hc-${Date.now()}`;
   const checkedAt = new Date().toISOString();
   const start = Date.now();
@@ -168,14 +176,14 @@ router.post("/environment/health-checks/run", async (req, res): Promise<void> =>
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
-    const r = await fetch(url, { signal: controller.signal, method: "HEAD" }).catch(() =>
-      fetch(url, { signal: controller.signal })
+    const r = await fetch(safeUrl, { signal: controller.signal, method: "HEAD" }).catch(() =>
+      fetch(safeUrl, { signal: controller.signal })
     );
     clearTimeout(timeout);
     const responseTimeMs = Date.now() - start;
     const result = {
       id,
-      url,
+      url: safeUrl,
       status: r.ok ? "healthy" : r.status >= 500 ? "down" : "degraded",
       statusCode: r.status,
       responseTimeMs,
@@ -188,7 +196,7 @@ router.post("/environment/health-checks/run", async (req, res): Promise<void> =>
   } catch (err) {
     const result = {
       id,
-      url,
+      url: safeUrl,
       status: "down",
       statusCode: null,
       responseTimeMs: Date.now() - start,
